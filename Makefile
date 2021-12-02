@@ -1,10 +1,10 @@
 include common.mk
 
-MODULES=bgzip tests
+MODULES=xbgzip tests
 
-test: lint mypy bgzip_utils tests
+test: lint mypy xbgzip_utils tests
 
-profile: bgzip_utils
+profile: xbgzip_utils
 	python dev_scripts/profile.py
 
 lint:
@@ -14,27 +14,27 @@ mypy:
 	mypy --ignore-missing-imports $(MODULES)
 
 tests:
-	PYTHONWARNINGS=ignore:ResourceWarning coverage run --source=bgzip \
+	PYTHONWARNINGS=ignore:ResourceWarning coverage run --source=xbgzip \
 		-m unittest discover --start-directory tests --top-level-directory . --verbose
 
-version: bgzip/version.py
+version: xbgzip/version.py
 
-bgzip/version.py: setup.py
+xbgzip/version.py: setup.py
 	echo "__version__ = '$$(python setup.py --version)'" > $@
 
 clean:
 	git clean -dfx
 
-bgzip_utils.c: clean
-	cython bgzip_utils/bgzip_utils.pyx
+xbgzip_utils.c: clean
+	cython xbgzip_utils/xbgzip_utils.pyx
 
-bgzip_utils: clean
+xbgzip_utils: clean
 	BUILD_WITH_CYTHON=1 python setup.py build_ext --inplace
 
 build: clean version
 	BUILD_WITH_CYTHON=1 python setup.py bdist_wheel
 
-sdist: clean version bgzip_utils.c
+sdist: clean version xbgzip_utils.c
 	python setup.py sdist
 
 install: build

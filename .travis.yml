@@ -3,7 +3,7 @@ python:
   - 3.8
 install:
   - pip install -r requirements-dev.txt
-  - make bgzip_utils
+  - make xbgzip_utils
 script:
   - set -eo pipefail
   - make test

@@ -3,12 +3,12 @@ from math import floor, ceil
 from multiprocessing import cpu_count
 from typing import Any, Dict, Generator, IO, List, Sequence, Tuple
 
-from bgzip import bgzip_utils as bgu  # type: ignore
+from xbgzip import xbgzip_utils as bgu  # type: ignore
 
 
 # samtools format specs:
 # https://samtools.github.io/hts-specs/SAMv1.pdf
-bgzip_eof = bytes.fromhex("1f8b08040000000000ff0600424302001b0003000000000000000000")
+xbgzip_eof = bytes.fromhex("1f8b08040000000000ff0600424302001b0003000000000000000000")
 
 DEFAULT_DECOMPRESS_BUFFER_SZ = 1024 * 1024 * 50
 
@@ -40,7 +40,7 @@ class BGZipReader(io.RawIOBase):
                                               num_threads=self.num_threads)
             if self._input_data and not inflate_info['bytes_inflated']:
                 # Not enough space at end of buffer, reset indices
-                assert self._start == self._stop, "Read error. Please contact bgzip maintainers."
+                assert self._start == self._stop, "Read error. Please contact xbgzip maintainers."
                 self._start = self._stop = 0
             else:
                 self._input_data = self._input_data[inflate_info['bytes_read']:]
@@ -136,7 +136,7 @@ class BGZipWriter(io.IOBase):
     def close(self):
         if self._input_buffer:
             self._compress(process_all_chunks=True)
-        self.fileobj.write(bgzip_eof)
+        self.fileobj.write(xbgzip_eof)
         self.fileobj.flush()
 
 class Deflater:

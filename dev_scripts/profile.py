@@ -11,7 +11,7 @@ from contextlib import AbstractContextManager
 pkg_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))  # noqa
 sys.path.insert(0, pkg_root)  # noqa
 
-import bgzip
+import xbgzip
 
 
 VCF_FILEPATH = os.path.join(pkg_root, "dev_scripts", "partial.vcf.gz")
@@ -49,7 +49,7 @@ def profile_read():
     for num_threads in range(1, 1 + cpu_count()):
         with open(VCF_FILEPATH, "rb") as raw:
             with profile(f"BGZipReader read (num_threads={num_threads})"):
-                reader = bgzip.BGZipReader(raw, num_threads=num_threads)
+                reader = xbgzip.BGZipReader(raw, num_threads=num_threads)
                 data = bytearray()
                 while True:
                     d = reader.read(randint(1024 * 1024 * 1, 1024 * 1024 * 10))
@@ -71,8 +71,8 @@ def profile_write():
             fh.write(inflated_data)
 
     for num_threads in range(1, 1 + cpu_count()):
-        with profile(f"bgzip write (num_threads={num_threads})"):
-            with bgzip.BGZipWriter(io.BytesIO(), num_threads=num_threads) as writer:
+        with profile(f"xbgzip write (num_threads={num_threads})"):
+            with xbgzip.BGZipWriter(io.BytesIO(), num_threads=num_threads) as writer:
                 n = 987345
                 writer.write(inflated_data[:n])
                 writer.write(inflated_data[n:])

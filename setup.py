@@ -18,8 +18,8 @@ else:
 file_ext = "pyx" if os.environ.get("BUILD_WITH_CYTHON") else "c"
 extensions = [
     Extension(
-        name="bgzip.bgzip_utils",
-        sources=[f"bgzip_utils/bgzip_utils.{file_ext}"],
+        name="xbgzip.xbgzip_utils",
+        sources=[f"xbgzip_utils/xbgzip_utils.{file_ext}"],
         libraries=["z"],
         extra_compile_args=extra_compile_args,
         extra_link_args=extra_link_args,
@@ -34,7 +34,7 @@ with open("README.md") as fh:
     long_description = fh.read()
 
 def get_version():
-    filepath = os.path.join(os.path.dirname(__file__), "bgzip", "version.py")
+    filepath = os.path.join(os.path.dirname(__file__), "xbgzip", "version.py")
     if os.path.isfile(filepath):
         # Pick up the version packaged into a wheel or source distribution
         with open(filepath) as fh:
@@ -52,12 +52,12 @@ def get_version():
         return out[1:]
 
 setup(
-    name='bgzip',
+    name='xbgzip',
     version=get_version(),
     description='Utilities working with blocked gzip streams.',
     long_description=long_description,
     long_description_content_type='text/markdown',
-    url='https://github.com/xbrianh/bgzip.git',
+    url='https://github.com/xbrianh/xbgzip.git',
     author='Brian Hannafious',
     author_email='bhannafi@ucsc.edu',
     license='MIT',
