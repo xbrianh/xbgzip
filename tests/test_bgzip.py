@@ -5,6 +5,7 @@ import sys
 import gzip
 import random
 import unittest
+from tempfile import TemporaryDirectory
 from random import randint
 from typing import Any, Generator, List, Sequence
 
@@ -221,6 +222,23 @@ class TestBGZipWriter(unittest.TestCase):
             number_of_blocks = 2 * xbgzip.bgu.block_batch_size + 1
             size = number_of_blocks * xbgzip.bgu.block_data_inflated_size
             writer.write(bytearray(size))
+
+class TestOpenUtil(unittest.TestCase):
+    def test_open(self):
+        with TemporaryDirectory() as dirname:
+            filepath = os.path.join(dirname, "blah")
+            expected_data = os.urandom(2024)
+            with xbgzip.xbgz_open(filepath, "w") as fh:
+                fh.write(expected_data)
+
+            with xbgzip.xbgz_open(filepath, "r") as fh:
+                data = bytes()
+                while True:
+                    new_data = fh.read()
+                    if not new_data:
+                        break
+                    data += new_data
+            self.assertEqual(expected_data, data)
 
 if __name__ == '__main__':
     unittest.main()

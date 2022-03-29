@@ -1,7 +1,9 @@
 import io
+from enum import Enum
 from math import floor, ceil
 from multiprocessing import cpu_count
-from typing import Any, Dict, Generator, IO, List, Sequence, Tuple
+from contextlib import contextmanager
+from typing import Any, Dict, Generator, IO, List, Sequence, Tuple, Type
 
 from xbgzip import xbgzip_utils as bgu  # type: ignore
 
@@ -59,6 +61,8 @@ class BGZipReader(io.RawIOBase):
         """
         Return a view to mutable memory. View should be consumed before calling 'read' again.
         """
+        if not isinstance(size, int):
+            raise TypeError(f"Expected 'int' for size, got '{type(size)}'")
         if -1 == size:
             data = bytearray()
             while True:
@@ -68,7 +72,10 @@ class BGZipReader(io.RawIOBase):
                         break
                     data.extend(d)
                 finally:
-                    d.release()
+                    try:
+                        d.release()
+                    except UnboundLocalError:
+                        pass
             out = memoryview(data)
         else:
             out = self._read(size)
@@ -156,3 +163,22 @@ class Deflater:
         deflated_sizes = bgu.deflate_to_buffers(data, self._deflate_bufs, self._num_threads)
         bytes_deflated = min(len(data), bgu.block_data_inflated_size * len(deflated_sizes))
         return bytes_deflated, [memoryview(buf)[:sz] for buf, sz in zip(self._deflate_bufs, deflated_sizes)]
+
+class _Modes(Enum):
+    r: Tuple[str, Type[BGZipReader]] = ("rb", BGZipReader)
+    w: Tuple[str, Type[BGZipWriter]] = ("wb", BGZipWriter)
+
+@contextmanager
+def xbgz_open(filepath: str, mode: str="r"):
+    if mode in _Modes.__members__:
+        filemode, bgzip_class = _Modes[mode].value
+        raw = open(filepath, filemode)
+        handle = bgzip_class(raw)
+        try:
+            yield handle
+        finally:
+            handle.close()
+            raw.close()
+    else:
+        supported_modes = [f"'{m.name}'" for m in _Modes]
+        raise ValueError(f"File mode '{mode}' not supported. Supported modes are {supported_modes}")
