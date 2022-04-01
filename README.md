@@ -20,10 +20,19 @@ pip install bgzip
 ```
 
 #### Requirements
-bgzip requires [openmp](https://github.com/llvm/llvm-project/tree/master/openmp). On MacOS
-it can be installed with:
+bgzip requires [openmp](https://github.com/llvm/llvm-project/tree/master/openmp).
+
+#### MacOS
+On MacOS openmp can be installed with:
 ```
 brew install llvm
+```
+
+Depending on your system, you may need to set the following environment variables to the locaion of llvm library
+and headers. The following values are common for homebrew installations, but my be different on your system!
+```
+export LDFLAGS="-L/opt/homebrew/opt/llvm/lib"
+export CPPFLAGS="-I/opt/homebrew/opt/llvm/include"
 ```
 
 ## Links
