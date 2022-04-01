@@ -11,6 +11,14 @@ install_requires = [line.rstrip() for line in open(os.path.join(os.path.dirname(
 if "Darwin" == platform.system():
     extra_compile_args = ["-O3", "-Xpreprocessor", "-fopenmp"]
     extra_link_args = ["-lomp"]
+    if "arm" == platform.processor():
+        extra_compile_args += ["-arch", "arm64"]
+        extra_link_args += ["-arch", "arm64"]
+    # Detect llvm for some homebrew installes. There's probably a less hacky way to do this.
+    if os.path.exists("/opt/homebrew/opt/llvm/include"):
+        extra_compile_args += ["-I", "/opt/homebrew/opt/llvm/include"]
+    if os.path.exists("/opt/homebrew/opt/llvm/lib"):
+        extra_link_args += ["-L", "/opt/homebrew/opt/llvm/lib"]
 else:
     extra_compile_args = ["-O3", "-fopenmp"]
     extra_link_args = ["-fopenmp"]
@@ -59,7 +67,7 @@ setup(
     long_description_content_type='text/markdown',
     url='https://github.com/xbrianh/bgzip.git',
     author='Brian Hannafious',
-    author_email='bhannafi@ucsc.edu',
+    author_email='xbrianh@amorphous-industries.com',
     license='MIT',
     packages=find_packages(exclude=['tests']),
     ext_modules=extensions,
