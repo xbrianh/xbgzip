@@ -29,8 +29,6 @@ cdef enum bgzip_err:
     BGZIP_OK
 
 cdef const unsigned char * MAGIC = "\037\213\010\4"
-# cdef Bytef * HEADER = b"\037\213\010\4\0\0\0\0\0\377\6\0\102\103\2\0"
-cdef bytes HEADER = b"\037\213\010\4\0\0\0\0\0\377\6\0\102\103\2\0"
 
 ctypedef block_header_s BlockHeader
 cdef struct block_header_s:
@@ -39,11 +37,6 @@ cdef struct block_header_s:
     unsigned char extra_flags
     unsigned char os_type
     unsigned short extra_len
-
-ctypedef block_header_subfield_s BlockHeaderSubfield
-cdef struct block_header_subfield_s:
-    unsigned char id_[2]
-    unsigned short length
 
 ctypedef block_header_bgzip_subfield_s BlockHeaderBGZipSubfield
 cdef struct block_header_bgzip_subfield_s:
@@ -67,36 +60,29 @@ cdef struct block_s:
     Bytef * next_out
     unsigned int avail_out
 
-ctypedef bgzip_stream_s BGZipStream
-cdef struct bgzip_stream_s:
-    unsigned int available_in
-    Bytef *next_in
-
-ctypedef chunk_s Chunk
-cdef struct chunk_s:
-    BGZipStream src
-    Block * blocks
-    unsigned int num_blocks
-    unsigned int inflated_size
-    unsigned int bytes_read
-
 class BGZIPException(Exception):
     pass
 
-class BGZIPMalformedHeaderException(BGZIPException):
-    pass
+cdef py_memoryview_to_buffer(object py_memoryview, Bytef ** buf):
+    cdef PyObject * obj = <PyObject *>py_memoryview
+    if PyMemoryView_Check(obj):
+        # TODO: Check buffer is contiguous, has normal stride
+        buf[0] = <Bytef *>(<Py_buffer *>PyMemoryView_GET_BUFFER(obj)).buf
+        assert NULL != buf
+    else:
+        raise TypeError("'py_memoryview' must be a memoryview instance.")
 
-cdef bgzip_err inflate_block(Block * block) nogil:
+cdef bgzip_err inflate_block(Bytef * src, Bytef * dst, int deflated_size, int inflated_size, unsigned int crc) nogil:
     cdef z_stream zst
     cdef int err
 
     zst.zalloc = NULL
     zst.zfree = NULL
     zst.opaque = NULL
-    zst.avail_in = block.deflated_size
-    zst.avail_out = 1024 * 1024
-    zst.next_in = block.next_in
-    zst.next_out = block.next_out
+    zst.avail_in = deflated_size
+    zst.avail_out = inflated_size
+    zst.next_in = src
+    zst.next_out = dst
 
     err = inflateInit2(&zst, -15)
     if Z_OK != err:
@@ -108,10 +94,10 @@ cdef bgzip_err inflate_block(Block * block) nogil:
         return BGZIP_ZLIB_ERROR
     inflateEnd(&zst)
 
-    if block[0].inflated_size != zst.total_out:
+    if inflated_size != zst.total_out:
         return BGZIP_BLOCK_SIZE_MISMATCH
 
-    if block.crc != crc32(0, block.next_out, block.inflated_size):
+    if crc != crc32(0, src, inflated_size):
         return BGZIP_CRC_MISMATCH
 
     return BGZIP_OK
@@ -119,162 +105,32 @@ cdef bgzip_err inflate_block(Block * block) nogil:
     # Difference betwwen `compress` and `deflate`:
     # https://stackoverflow.com/questions/10166122/zlib-differences-between-the-deflate-and-compress-functions
 
-cdef void * ref_and_advance(BGZipStream * rb, unsigned int member_size, bgzip_err *err) nogil:
-    if rb.available_in  < member_size:
-        err[0] = BGZIP_INSUFFICIENT_BYTES
-        return NULL
-    else:
-        ret_val = rb.next_in
-        rb.next_in += member_size
-        rb.available_in  -= member_size
-        err[0] = BGZIP_OK
-        return ret_val
+def inflate_parts(list blocks, list dst_parts, int num_threads):
+    cdef int i, err, num_parts = 0
+    cdef int deflated_size[BLOCK_BATCH_SIZE]
+    cdef int inflated_size[BLOCK_BATCH_SIZE]
+    cdef unsigned int crc[BLOCK_BATCH_SIZE]
+    cdef Bytef * src_bufs[BLOCK_BATCH_SIZE]
+    cdef Bytef * dst_bufs[BLOCK_BATCH_SIZE]
 
-cdef bgzip_err read_block(Block * block, BGZipStream *src) nogil:
-    cdef unsigned int i
-    cdef bgzip_err err
-    cdef BlockHeader * head
-    cdef BlockTailer * tail
-    cdef BlockHeaderSubfield * subfield
-    cdef Bytef * subfield_data
-    cdef unsigned int extra_len
+    if len(blocks) != len(dst_parts):
+        raise ValueError("Number of destination buffers not equal to number of input blocks!")
 
-    block.block_size = 0
+    num_parts = len(blocks)
 
-    head = <BlockHeader *>ref_and_advance(src, sizeof(BlockHeader), &err)
-    if err:
-        return err
+    if num_parts > BLOCK_BATCH_SIZE:
+        raise Exception(f"Cannot inflate more than {BLOCK_BATCH_SIZE} per call")
 
-    for i in range(<unsigned int>MAGIC_LENGTH):
-        if head.magic[i] != MAGIC[i]:
-            return BGZIP_MALFORMED_HEADER
-
-    extra_len = head.extra_len
-    while extra_len > 0:
-        subfield = <BlockHeaderSubfield *>ref_and_advance(src, sizeof(BlockHeaderSubfield), &err)
-        if err:
-            return err
-        extra_len -= sizeof(BlockHeaderSubfield)
-
-        subfield_data = <Bytef *>ref_and_advance(src, subfield.length, &err)
-        if err:
-            return err
-        extra_len -= sizeof(subfield.length)
-
-        if b"B" == subfield.id_[0] and b"C" == subfield.id_[1]:
-            if subfield.length != 2:
-                return BGZIP_MALFORMED_HEADER
-            block.block_size = (<unsigned short *>subfield_data)[0]
-
-    if 0 != extra_len:
-        return BGZIP_BLOCK_SIZE_MISMATCH
-
-    if 0 >= block.block_size:
-        return BGZIP_BLOCK_SIZE_NEGATIVE
-
-    block.next_in = src.next_in
-    block.deflated_size = 1 + block.block_size - sizeof(BlockHeader) - head.extra_len - sizeof(BlockTailer)
-
-    ref_and_advance(src, block.deflated_size, &err)
-    if err:
-        return err
-
-    tail = <BlockTailer *>ref_and_advance(src, sizeof(BlockTailer), &err)
-    if err:
-        return err
-
-    block.crc = tail.crc
-    block.inflated_size = tail.inflated_size
-
-cdef py_memoryview_to_buffer(object py_memoryview, Bytef ** buf):
-    cdef PyObject * obj = <PyObject *>py_memoryview
-    if PyMemoryView_Check(obj):
-        # TODO: Check buffer is contiguous, has normal stride
-        buf[0] = <Bytef *>(<Py_buffer *>PyMemoryView_GET_BUFFER(obj)).buf
-        assert NULL != buf
-    else:
-        raise TypeError("'py_memoryview' must be a memoryview instance.")
-
-cdef void read_chunk(Chunk *chunk, int blocks_available, unsigned int output_bytes_available) nogil:
-    cdef int i = 0
-    cdef BGZipStream curr
-
-    for i in range(blocks_available):
-        if not chunk[0].src.available_in:
-            break
-        curr = chunk[0].src
-        err = read_block(&chunk[0].blocks[i], &chunk[0].src)
-        if BGZIP_OK == err:
-            pass
-        elif BGZIP_INSUFFICIENT_BYTES == err:
-            chunk[0].src = curr
-            break
-        elif BGZIP_MALFORMED_HEADER == err:
-            raise BGZIPMalformedHeaderException("Block gzip magic not found in header.")
-        else:
-            raise BGZIPException("decompress 2 error")
-        if output_bytes_available < chunk[0].inflated_size + chunk[0].blocks[i].inflated_size:
-            chunk[0].src = curr
-            break
-        chunk[0].num_blocks += 1
-        chunk[0].inflated_size += chunk[0].blocks[i].inflated_size
-        chunk[0].bytes_read += 1 + chunk[0].blocks[i].block_size
-
-def inflate_chunks(list py_chunks, object py_dst_buf, int num_threads, atomic: bool=False):
-    """
-    Inflate bytes from `py_chunks` into `dst_buff`
-    """
-    cdef int i, err, num_chunks_read, num_src_chunks = 0, num_blocks_read = 0, _atomic = int(atomic)
-    cdef Bytef * dst_buf = NULL
-    cdef Block blocks[BLOCK_BATCH_SIZE]
-    cdef Chunk atom, chunks[BLOCK_BATCH_SIZE]
-
-    memset(&chunks[0], 0, BLOCK_BATCH_SIZE * sizeof(Chunk))
-
-    num_src_chunks = min(len(py_chunks), BLOCK_BATCH_SIZE)
-    for i in range(num_src_chunks):
-        py_memoryview_to_buffer(py_chunks[i], &chunks[i].src.next_in)
-        chunks[i].src.available_in = len(py_chunks[i])
-
-    py_memoryview_to_buffer(py_dst_buf, &dst_buf)
-    cdef unsigned int avail_out = PySequence_Size(<PyObject *>py_dst_buf)
+    for i in range(num_parts):
+        py_memoryview_to_buffer(blocks[i].deflated_data, &src_bufs[i])
+        py_memoryview_to_buffer(dst_parts[i], &dst_bufs[i])
+        deflated_size[i] = len(blocks[i].deflated_data)
+        inflated_size[i] = blocks[i].inflated_size
+        crc[i] = blocks[i].crc
 
     with nogil:
-        for i in range(num_src_chunks):
-            chunks[i].blocks = &blocks[num_blocks_read]
-            atom = chunks[i]
-            read_chunk(&chunks[i], BLOCK_BATCH_SIZE - num_blocks_read, avail_out)
-            avail_out -= chunks[i].inflated_size
-            num_blocks_read += chunks[i].num_blocks
-            if chunks[i].src.available_in:
-                if _atomic:
-                    num_blocks_read -= chunks[i].num_blocks
-                    chunks[i] = atom
-                    i -= 1
-                break
-
-        num_chunks_read = 1 + i if num_blocks_read else 0
-
-        for i in range(num_blocks_read):
-            blocks[i].next_out = dst_buf
-            dst_buf += blocks[i].inflated_size
-
-        for i in prange(num_blocks_read, num_threads=num_threads, schedule="dynamic"):
-            inflate_block(&blocks[i])
-
-    remaining_chunks = list()
-    for i, py_chunk in enumerate(py_chunks):
-        if i < BLOCK_BATCH_SIZE:
-            if chunks[i].bytes_read < len(py_chunk):
-                remaining_chunks.append(py_chunk[chunks[i].bytes_read:])
-        else:
-            remaining_chunks.append(py_chunk)
-
-    return {'bytes_read':       sum(chunks[i].bytes_read for i in range(num_chunks_read)),
-            'bytes_inflated':   sum(chunks[i].inflated_size for i in range(num_chunks_read)),
-            'remaining_chunks': remaining_chunks,
-            'block_sizes':      [blocks[i].inflated_size for i in range(num_blocks_read)],
-            'blocks_per_chunk': [chunks[i].num_blocks for i in range(num_chunks_read)]}
+        for i in prange(num_parts, num_threads=num_threads, schedule="dynamic"):
+            inflate_block(src_bufs[i], dst_bufs[i], deflated_size[i], inflated_size[i], crc[i])
 
 cdef bgzip_err compress_block(Block * block) nogil:
     cdef z_stream zst

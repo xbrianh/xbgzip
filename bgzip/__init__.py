@@ -3,7 +3,7 @@ from math import floor, ceil
 from multiprocessing import cpu_count
 from typing import Any, Dict, Generator, IO, List, Sequence, Tuple
 
-from bgzip import bgzip_utils as bgu  # type: ignore
+from bgzip import records, bgzip_utils as bgu  # type: ignore
 
 
 # samtools format specs:
@@ -12,10 +12,70 @@ bgzip_eof = bytes.fromhex("1f8b08040000000000ff0600424302001b0003000000000000000
 
 DEFAULT_DECOMPRESS_BUFFER_SZ = 1024 * 1024 * 50
 
+
+def _read_block(offset: int, data: memoryview):
+    block_offset = offset
+
+    block_header = records.BlockHeader.unpack(data[offset:])
+    offset += records.BlockHeader.size
+
+    records.BlockHeaderSubfield.unpack(data[offset:])
+    offset += records.BlockHeaderSubfield.size
+
+    block_size = records.BlockSizeField.unpack(data[offset:])
+    offset += records.BlockSizeField.size
+
+    deflated_size = (1
+                     + block_size.length
+                     - records.BlockHeader.size
+                     - block_header.extra_len
+                     - records.BlockTailer.size)
+
+    deflated_data = data[offset: offset + deflated_size]
+    offset += deflated_size
+
+    block_tailer = records.BlockTailer.unpack(data[offset:])
+    offset += records.BlockTailer.size
+
+    block = records.BZBlock(
+        offset - block_offset,  # block size
+        block_offset,
+        deflated_data,
+        block_tailer.inflated_size,
+        block_tailer.crc
+    )
+
+    return block
+
+def read_blocks(data: memoryview):
+    offset = 0
+    while True:
+        try:
+            block = _read_block(offset, data)
+            offset += block.size
+            yield block
+        except (records.InsufficientDataError, records.struct.error):  # likely insufficient data to unpack a struct
+            break
+
+def inflate_data(data: memoryview, dst_buf: memoryview, num_threads: int=1):
+    blocks = [b for b in read_blocks(data)]
+
+    dst_parts = list()
+    bytes_read = bytes_inflated = 0
+    for b in blocks:
+        if bytes_inflated + b.inflated_size > len(dst_buf):
+            break
+        dst_parts.append(dst_buf[bytes_inflated: bytes_inflated + b.inflated_size])
+        bytes_read += b.size
+        bytes_inflated += b.inflated_size
+    bgu.inflate_parts(blocks[:len(dst_parts)], dst_parts, num_threads)
+    blocks = blocks[len(dst_parts):]
+    return dict(bytes_read=bytes_read, bytes_inflated=bytes_inflated)
+
 class BGZipReader(io.RawIOBase):
     """
-    Inflate data into a pre-allocated buffer. The buffer size will not change, and should be large enough
-    to hold at least twice the data of any call to `read`.
+    Inflate data into a pre-allocated buffer. The buffer should be large enough to hold at least twice the data of any
+    call to `read`.
     """
     def __init__(self,
                  fileobj: IO,
@@ -35,9 +95,9 @@ class BGZipReader(io.RawIOBase):
     def _fetch_and_inflate(self):
         while True:
             self._input_data += self.fileobj.read(self.raw_read_chunk_size)
-            inflate_info = bgu.inflate_chunks([memoryview(self._input_data)],
-                                              self._inflate_buf[self._start:],
-                                              num_threads=self.num_threads)
+            inflate_info = inflate_data(memoryview(self._input_data),
+                                        self._inflate_buf[self._start:],
+                                        self.num_threads)
             if self._input_data and not inflate_info['bytes_inflated']:
                 # Not enough space at end of buffer, reset indices
                 assert self._start == self._stop, "Read error. Please contact bgzip maintainers."
@@ -96,18 +156,19 @@ class BGZipReader(io.RawIOBase):
         if hasattr(self, "_buffered"):
             self._buffered.close()
 
-def inflate_chunks(chunks: Sequence[memoryview],
-                   inflate_buf: memoryview,
-                   num_threads: int=cpu_count(),
-                   atomic: bool=False) -> Dict[str, Any]:
-    inflate_info = bgu.inflate_chunks(chunks, inflate_buf, num_threads, atomic=atomic)
-    blocks: List[memoryview] = [None] * len(inflate_info['block_sizes'])  # type: ignore
-    total = 0
-    for i, sz in enumerate(inflate_info['block_sizes']):
-        blocks[i] = inflate_buf[total: total + sz]
-        total += sz
-    inflate_info['blocks'] = blocks
-    return inflate_info
+# TODO resurrect this after moving most logic to python
+# def inflate_chunks(chunks: Sequence[memoryview],
+#                    inflate_buf: memoryview,
+#                    num_threads: int=cpu_count(),
+#                    atomic: bool=False) -> Dict[str, Any]:
+#     inflate_info = bgu.inflate_chunks(chunks, inflate_buf, num_threads, atomic=atomic)
+#     blocks: List[memoryview] = [None] * len(inflate_info['block_sizes'])  # type: ignore
+#     total = 0
+#     for i, sz in enumerate(inflate_info['block_sizes']):
+#         blocks[i] = inflate_buf[total: total + sz]
+#         total += sz
+#     inflate_info['blocks'] = blocks
+#     return inflate_info
 
 class BGZipWriter(io.IOBase):
     def __init__(self, fileobj: IO, num_threads: int=cpu_count()):
