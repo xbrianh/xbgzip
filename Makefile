@@ -1,8 +1,8 @@
 include common.mk
-
 MODULES=bgzip tests
+tests:=$(wildcard tests/test_*.py)
 
-test: lint mypy bgzip_utils tests
+test: lint mypy bgzip_utils $(tests)
 
 profile: bgzip_utils
 	python dev_scripts/profile.py
@@ -11,11 +11,10 @@ lint:
 	flake8 $(MODULES) *.py
 
 mypy:
-	mypy --ignore-missing-imports $(MODULES)
+	mypy $(MODULES)
 
-tests:
-	PYTHONWARNINGS=ignore:ResourceWarning coverage run --source=bgzip \
-		-m unittest discover --start-directory tests --top-level-directory . --verbose
+$(tests): %.py:
+	python $*.py
 
 version: bgzip/version.py
 
@@ -40,4 +39,4 @@ sdist: clean version bgzip_utils.c
 install: build
 	pip install --upgrade dist/*.whl
 
-.PHONY: test profile lint mypy tests clean build sdist install
+.PHONY: test profile lint mypy $(tests) clean build sdist install

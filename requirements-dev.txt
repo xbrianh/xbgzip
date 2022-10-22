@@ -1,5 +1,4 @@
 flake8
-coverage
 mypy
 twine
 Cython
