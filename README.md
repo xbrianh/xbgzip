@@ -43,3 +43,7 @@ Package distribution [PyPI](https://pypi.org/project/bgzip/)
 Please report bugs, issues, feature requests, etc. on [GitHub](https://github.com/xbrianh/bgzip).
 
 ![](https://travis-ci.org/xbrianh/bgzip.svg?branch=master) ![](https://badge.fury.io/py/bgzip.svg)
+
+## Cloud Development Environment
+Click [here](https://gitpod.io/#https://github.com/xbrianh/xbgzip) to open a [Gitpod](https://www.gitpod.io) workspace
+and hack on xbgzip!
