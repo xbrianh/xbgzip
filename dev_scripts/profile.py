@@ -14,8 +14,14 @@ sys.path.insert(0, pkg_root)  # noqa
 import bgzip
 
 
-VCF_FILEPATH = os.path.join(pkg_root, "dev_scripts", "partial.vcf.gz")
-UNCOMPRESSED_LENGTH = 22242386 
+VCF_FILEPATH = os.path.join(pkg_root, "dev_scripts", "test.vcf.gz")
+UNCOMPRESSED_LENGTH = 219079695
+
+def download_fixture():
+    from subprocess import run
+    url = "s3://1000genomes/technical/working/20100929_sanger_low_coverage_snps/AFR.union.snps.20100517.sites.vcf.gz"
+    p = run(f"aws s3 cp {url} {VCF_FILEPATH}".split())
+    p.check_returncode()
 
 class profile(AbstractContextManager):
     def __init__(self, name="default"):
@@ -78,6 +84,8 @@ def profile_write():
                 writer.write(inflated_data[n:])
 
 if __name__ == "__main__":
+    if not os.path.exists(VCF_FILEPATH):
+        download_fixture()
     profile_read()
     print()
     profile_write()
