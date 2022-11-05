@@ -61,4 +61,4 @@ class BlockTailer(Struct):
     fields = namedtuple("BlockTailer", "crc inflated_size")  # type: ignore
     size = struct.calcsize(fmt)
 
-BZBlock = namedtuple("BZBlock", "size offset deflated_data inflated_size crc")
+BZBlock = namedtuple("BZBlock", "size deflated_data inflated_size crc")

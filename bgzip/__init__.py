@@ -38,7 +38,6 @@ def _read_block(offset: int, data: memoryview):
 
     block = records.BZBlock(
         offset - block_offset,  # block size
-        block_offset,
         deflated_data,
         block_tailer.inflated_size,
         block_tailer.crc
