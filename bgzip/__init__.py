@@ -1,7 +1,6 @@
 import io
-from math import floor, ceil
 from multiprocessing import cpu_count
-from typing import Any, Dict, Generator, IO, List, Sequence, Tuple
+from typing import Generator, IO, List, Tuple
 
 from bgzip import records, bgzip_utils as bgu  # type: ignore
 

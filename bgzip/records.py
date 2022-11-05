@@ -19,7 +19,7 @@ class BlockHeader(Struct):
     _magic = b"\037\213\010\4"
     _magic_sz = len(_magic)
     fmt = "IccH"
-    fields = namedtuple("BlockHeader", "mod_time extra_flags os_type extra_len")
+    fields = namedtuple("BlockHeader", "mod_time extra_flags os_type extra_len")  # type: ignore
     size = _magic_sz + struct.calcsize(fmt)
 
     @classmethod
@@ -37,7 +37,7 @@ class BlockHeaderSubfield(Struct):
     _magic = b"BC"
     _magic_sz = len(_magic)
     fmt = "H"
-    fields = namedtuple("BlockHeaderSubfield", "length")
+    fields = namedtuple("BlockHeaderSubfield", "length")  # type: ignore
     size = _magic_sz + struct.calcsize(fmt)
 
     @classmethod
@@ -53,12 +53,12 @@ class BlockHeaderSubfield(Struct):
 
 class BlockSizeField(Struct):
     fmt = "H"
-    fields = namedtuple("BlockSizeField", "length")
+    fields = namedtuple("BlockSizeField", "length")  # type: ignore
     size = struct.calcsize(fmt)
 
 class BlockTailer(Struct):
     fmt = "II"
-    fields = namedtuple("BlockTailer", "crc inflated_size")
+    fields = namedtuple("BlockTailer", "crc inflated_size")  # type: ignore
     size = struct.calcsize(fmt)
 
 BZBlock = namedtuple("BZBlock", "size offset deflated_data inflated_size crc")
