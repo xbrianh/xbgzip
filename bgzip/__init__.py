@@ -55,20 +55,24 @@ def read_blocks(data: memoryview):
         except (records.InsufficientDataError, records.struct.error):  # likely insufficient data to unpack a struct
             break
 
-def inflate_data(data: memoryview, dst_buf: memoryview, num_threads: int=1):
-    blocks = [b for b in read_blocks(data)]
-
+def inflate_data(data: memoryview,
+                 remaining_blocks: List[records.BZBlock],
+                 dst_buf: memoryview,
+                 num_threads: int=1):
+    new_blocks = [b for b in read_blocks(data)]
+    bytes_read = sum(b.size for b in new_blocks)
+    blocks = remaining_blocks + new_blocks
     dst_parts = list()
-    bytes_read = bytes_inflated = 0
+    bytes_inflated = 0
     for b in blocks:
         if bytes_inflated + b.inflated_size > len(dst_buf):
             break
         dst_parts.append(dst_buf[bytes_inflated: bytes_inflated + b.inflated_size])
-        bytes_read += b.size
         bytes_inflated += b.inflated_size
     bgu.inflate_parts(blocks[:len(dst_parts)], dst_parts, num_threads)
-    blocks = blocks[len(dst_parts):]
-    return dict(bytes_read=bytes_read, bytes_inflated=bytes_inflated)
+    return dict(bytes_read=bytes_read,
+                bytes_inflated=bytes_inflated,
+                remaining_blocks=blocks[len(dst_parts):])
 
 class BGZipReader(io.RawIOBase):
     """
@@ -86,6 +90,7 @@ class BGZipReader(io.RawIOBase):
         self._start = self._stop = 0
         self.raw_read_chunk_size = raw_read_chunk_size
         self.num_threads = num_threads
+        self.remaining_blocks: List[records.BZBlock] = list()
 
     def readable(self) -> bool:
         return True
@@ -94,14 +99,16 @@ class BGZipReader(io.RawIOBase):
         while True:
             self._input_data += self.fileobj.read(self.raw_read_chunk_size)
             inflate_info = inflate_data(memoryview(self._input_data),
+                                        self.remaining_blocks,
                                         self._inflate_buf[self._start:],
                                         self.num_threads)
-            if self._input_data and not inflate_info['bytes_inflated']:
+            self.remaining_blocks = inflate_info['remaining_blocks']
+            self._input_data = self._input_data[inflate_info['bytes_read']:]
+            if not inflate_info['bytes_inflated'] and (self._input_data or self.remaining_blocks):
                 # Not enough space at end of buffer, reset indices
                 assert self._start == self._stop, "Read error. Please contact bgzip maintainers."
                 self._start = self._stop = 0
             else:
-                self._input_data = self._input_data[inflate_info['bytes_read']:]
                 self._stop += inflate_info['bytes_inflated']
                 break
 
