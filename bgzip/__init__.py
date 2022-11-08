@@ -1,6 +1,8 @@
 import io
 from multiprocessing import cpu_count
-from typing import Generator, IO, List, Tuple
+from typing import Generator, IO, List, Optional, Tuple
+
+import numpy as np
 
 from bgzip import records, bgzip_utils as bgu  # type: ignore
 
@@ -62,14 +64,23 @@ def inflate_data(data: memoryview,
     new_blocks = [b for b in read_blocks(data)]
     bytes_read = sum(b.size for b in new_blocks)
     blocks = remaining_blocks + new_blocks
-    dst_parts = list()
-    bytes_inflated = 0
-    for b in blocks:
-        if bytes_inflated + b.inflated_size > len(dst_buf):
-            break
-        dst_parts.append(dst_buf[bytes_inflated: bytes_inflated + b.inflated_size])
-        bytes_inflated += b.inflated_size
+
+    def _compute_deflate_parts():
+        inflated_size = np.array([0] + [b.inflated_size for b in blocks])
+        cum_inflated_size = inflated_size.cumsum()
+        cum_inflated_size = cum_inflated_size[cum_inflated_size < len(dst_buf)]
+        if len(cum_inflated_size) > num_threads:
+            cum_inflated_size = cum_inflated_size[:num_threads * (len(cum_inflated_size) // num_threads)]
+        # print("DOOM", len(cum_inflated_size), num_threads)
+        return cum_inflated_size
+
+    cum_inflated_size = _compute_deflate_parts()
+    dst_parts = [dst_buf[cum_inflated_size[i - 1]:cum_inflated_size[i]]
+                 for i in range(1, len(cum_inflated_size))]
+    bytes_inflated = cum_inflated_size[-1] if dst_parts else 0
+
     bgu.inflate_parts(blocks[:len(dst_parts)], dst_parts, num_threads)
+
     return dict(bytes_read=bytes_read,
                 bytes_inflated=bytes_inflated,
                 remaining_blocks=blocks[len(dst_parts):])
@@ -82,14 +93,14 @@ class BGZipReader(io.RawIOBase):
     def __init__(self,
                  fileobj: IO,
                  buffer_size: int=DEFAULT_DECOMPRESS_BUFFER_SZ,
-                 num_threads=cpu_count(),
+                 num_threads: Optional[int]=None,
                  raw_read_chunk_size=256 * 1024):
         self.fileobj = fileobj
         self._input_data = bytes()
         self._inflate_buf = memoryview(bytearray(buffer_size))
         self._start = self._stop = 0
         self.raw_read_chunk_size = raw_read_chunk_size
-        self.num_threads = num_threads
+        self.num_threads = num_threads or min(4, cpu_count())
         self.remaining_blocks: List[records.BZBlock] = list()
 
     def readable(self) -> bool:
