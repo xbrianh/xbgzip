@@ -1,4 +1,5 @@
 import io
+import time
 from multiprocessing import cpu_count
 from typing import Generator, IO, List, Optional, Tuple
 
@@ -57,6 +58,9 @@ def read_blocks(data: memoryview):
         except (records.InsufficientDataError, records.struct.error):  # likely insufficient data to unpack a struct
             break
 
+class ProfileData:
+    duration = 0
+
 def inflate_data(data: memoryview,
                  remaining_blocks: List[records.BZBlock],
                  dst_buf: memoryview,
@@ -71,7 +75,6 @@ def inflate_data(data: memoryview,
         cum_inflated_size = cum_inflated_size[cum_inflated_size < len(dst_buf)]
         if len(cum_inflated_size) > num_threads:
             cum_inflated_size = cum_inflated_size[:num_threads * (len(cum_inflated_size) // num_threads)]
-        # print("DOOM", len(cum_inflated_size), num_threads)
         return cum_inflated_size
 
     cum_inflated_size = _compute_deflate_parts()
@@ -79,7 +82,9 @@ def inflate_data(data: memoryview,
                  for i in range(1, len(cum_inflated_size))]
     bytes_inflated = cum_inflated_size[-1] if dst_parts else 0
 
+    start = time.time()
     bgu.inflate_parts(blocks[:len(dst_parts)], dst_parts, num_threads)
+    ProfileData.duration += time.time() - start
 
     return dict(bytes_read=bytes_read,
                 bytes_inflated=bytes_inflated,
@@ -94,13 +99,13 @@ class BGZipReader(io.RawIOBase):
                  fileobj: IO,
                  buffer_size: int=DEFAULT_DECOMPRESS_BUFFER_SZ,
                  num_threads: Optional[int]=None,
-                 raw_read_chunk_size=256 * 1024):
+                 raw_read_chunk_size: Optional[int]=None):
         self.fileobj = fileobj
         self._input_data = bytes()
         self._inflate_buf = memoryview(bytearray(buffer_size))
         self._start = self._stop = 0
-        self.raw_read_chunk_size = raw_read_chunk_size
         self.num_threads = num_threads or min(4, cpu_count())
+        self.raw_read_chunk_size = raw_read_chunk_size or 4 * 16 * 1024 * self.num_threads
         self.remaining_blocks: List[records.BZBlock] = list()
 
     def readable(self) -> bool:
@@ -148,6 +153,9 @@ class BGZipReader(io.RawIOBase):
             out = memoryview(data)
         else:
             out = self._read(size)
+        if not out:
+            print("DOOM", ProfileData.duration)
+            ProfileData.duration = 0
         return out
 
     def readinto(self, buff) -> int:

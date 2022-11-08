@@ -129,7 +129,7 @@ def inflate_parts(list blocks, list dst_parts, int num_threads):
         crc[i] = blocks[i].crc
 
     with nogil:
-        for i in prange(num_parts, num_threads=num_threads, schedule="dynamic"):
+        for i in prange(num_parts, num_threads=num_threads, schedule="static"):
             inflate_block(src_bufs[i], dst_bufs[i], deflated_size[i], inflated_size[i], crc[i])
 
 cdef bgzip_err compress_block(Block * block) nogil:
